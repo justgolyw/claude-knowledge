@@ -1,0 +1,35 @@
+# Obsidian 工作区和缓存
+.obsidian/workspace*
+.obsidian/appearance.json
+.obsidian/cache/
+.obsidian/plugins/*/data.json
+.obsidian/graph.json
+
+# 个人配置（不同步）
+.obsidian/hotkeys.json
+.obsidian/app.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Python相关
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 编辑器临时文件
+.vscode/
+.idea/
+*.log
+
+# 临时文件
+*.tmp
+*.bak
+.temp/
