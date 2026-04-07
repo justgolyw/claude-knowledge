@@ -1,11 +1,12 @@
-# Obsidian 工作区和缓存
-.obsidian/workspace*
-.obsidian/appearance.json
+# Obsidian 工作区状态（设备相关，不同步）
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
 .obsidian/cache/
-.obsidian/plugins/*/data.json
-.obsidian/graph.json
 
-# 个人配置（不同步）
+# 插件配置纳入版本控制（换设备时自动恢复）
+# .obsidian/plugins/ 整体跟踪，不排除 data.json
+
+# 个人设备配置（不同步）
 .obsidian/hotkeys.json
 .obsidian/app.json
 

@@ -5,16 +5,17 @@ Claude输出到Obsidian的快速导入工具
 
 功能：
 - 从粘贴板读取Claude输出
-- 自动解析和分类内容
+- 自动解析和分类内容（关键词计分算法）
 - 生成Obsidian格式的Markdown笔记
 - 自动添加元数据和标签
-- 保存到指定文件夹
+- 保存到指定文件夹（安全文件名处理）
 - 可选：自动Git提交
 
 使用方法：
     python claude-to-obsidian.py
 """
 
+import hashlib
 import os
 import re
 import sys
@@ -22,7 +23,7 @@ import json
 import subprocess
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 try:
     import pyperclip
@@ -38,18 +39,25 @@ class ClaudeToObsidian:
     # 知识库根目录
     VAULT_ROOT = Path.home() / "Notes" / "claude-knowledge"
 
-    # 内容分类规则
-    CATEGORIES = {
+    # 内容分类规则（关键词 + 权重）
+    CATEGORIES: Dict[str, dict] = {
         "代码": {
-            "keywords": ["```", "import ", "def ", "class ", "function ", "const ", "let ", "var "],
+            # 代码块标记权重高，单个代码块足以判定
+            "keywords": {"```": 3, "import ": 2, "def ": 2, "class ": 2,
+                         "function ": 2, "const ": 1, "let ": 1, "var ": 1,
+                         "return ": 1, "if (": 1, "for (": 1},
             "path": "10-claude-outputs/代码片段"
         },
         "理论概念": {
-            "keywords": ["解释", "什么是", "原理", "理解", "背景", "基础", "介绍"],
+            "keywords": {"解释": 2, "什么是": 3, "原理": 2, "理解": 1,
+                         "背景": 1, "基础": 2, "介绍": 2, "概念": 3,
+                         "定义": 2, "区别": 1},
             "path": "10-claude-outputs/理论概念"
         },
         "工具库": {
-            "keywords": ["库", "工具", "框架", "包", "package", "library", "framework", "npm", "pip"],
+            "keywords": {"库": 2, "工具": 2, "框架": 2, "包": 1,
+                         "package": 2, "library": 3, "framework": 3,
+                         "npm": 3, "pip": 3, "安装": 1, "使用方法": 1},
             "path": "10-claude-outputs/工具库"
         },
     }
@@ -84,17 +92,31 @@ class ClaudeToObsidian:
             raise ValueError(f"读取粘贴板失败：{e}")
 
     def extract_title(self, content: str) -> str:
-        """从内容中提取标题"""
-        # 优先使用第一个#标题
+        """从内容中提取标题，优先取一级标题"""
         lines = content.split('\n')
-        for line in lines:
-            if line.strip().startswith('#'):
-                title = line.strip().lstrip('#').strip()
-                return title[:100]  # 限制长度
 
-        # 否则使用第一行
-        first_line = lines[0].strip()[:100]
-        return first_line if first_line else "未命名笔记"
+        # 优先匹配一级标题（# 开头，且 # 后无更多 #）
+        for line in lines:
+            stripped = line.strip()
+            if re.match(r'^#\s+\S', stripped):
+                title = stripped.lstrip('#').strip()
+                return title[:80]
+
+        # 退而取任意级别标题
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('#'):
+                title = stripped.lstrip('#').strip()
+                if title:
+                    return title[:80]
+
+        # 最后用第一个非空行
+        for line in lines:
+            stripped = line.strip()
+            if stripped:
+                return stripped[:80]
+
+        return "未命名笔记"
 
     def extract_code_blocks(self, content: str) -> List[Tuple[str, str]]:
         """提取代码块（返回语言和代码）"""
@@ -118,14 +140,24 @@ class ClaudeToObsidian:
         return re.findall(url_pattern, content)
 
     def classify_content(self, content: str) -> str:
-        """自动分类内容"""
+        """自动分类内容（关键词计分，取得分最高的分类）"""
         content_lower = content.lower()
+        scores: Dict[str, int] = {}
 
         for category, config in self.CATEGORIES.items():
-            if any(kw in content_lower for kw in config["keywords"]):
-                return category
+            score = sum(
+                weight
+                for kw, weight in config["keywords"].items()
+                if kw in content_lower
+            )
+            if score > 0:
+                scores[category] = score
 
-        return "其他"
+        if not scores:
+            return "其他"
+
+        # 取得分最高的分类；同分时按 CATEGORIES 的声明顺序（稳定）
+        return max(scores, key=lambda c: scores[c])
 
     def extract_tags(self, content: str, category: str) -> List[str]:
         """提取或推断标签"""
@@ -195,6 +227,37 @@ category: {category}
 """
         return frontmatter
 
+    # 文件名最大字节数（Linux/macOS 255 字节，留余量）
+    MAX_FILENAME_BYTES = 200
+
+    def _safe_filename(self, title: str) -> str:
+        """
+        将标题转换为安全的文件名。
+
+        处理规则：
+        1. 去除 Windows/Linux 保留字符
+        2. 去除 . 开头（避免隐藏文件）
+        3. 按字节截断（中文 3 字节/字符，避免超限）
+        4. 空字符串回退到时间戳
+        """
+        # 去除路径分隔符和文件系统保留字符
+        safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', title)
+        # 去除首尾空白和点，防止 .hidden 或 trailing dot
+        safe = safe.strip('. ')
+
+        # 按字节截断（中文等多字节字符不能简单按字数截）
+        encoded = safe.encode('utf-8')
+        if len(encoded) > self.MAX_FILENAME_BYTES:
+            # 从截断点向前找合法的 UTF-8 边界
+            truncated = encoded[:self.MAX_FILENAME_BYTES]
+            safe = truncated.decode('utf-8', errors='ignore').rstrip()
+
+        # 最终为空时用时间戳作为 fallback
+        if not safe:
+            safe = datetime.now().strftime("笔记-%Y%m%d-%H%M%S")
+
+        return safe
+
     def save_note(self, title: str, markdown: str, category: str) -> Path:
         """保存笔记文件"""
         if category in self.CATEGORIES:
@@ -204,16 +267,15 @@ category: {category}
 
         folder.mkdir(parents=True, exist_ok=True)
 
-        # 生成安全的文件名
-        safe_title = re.sub(r'[<>:"/\\|?*]', '', title)
+        # 使用安全文件名生成器
+        safe_title = self._safe_filename(title)
         filename = f"{safe_title}.md"
 
-        # 处理重名
+        # 处理重名：后缀递增
         filepath = folder / filename
         counter = 1
         while filepath.exists():
-            name, ext = os.path.splitext(filename)
-            filename = f"{name}_{counter}{ext}"
+            filename = f"{safe_title}_{counter}.md"
             filepath = folder / filename
             counter += 1
 
@@ -221,13 +283,27 @@ category: {category}
         return filepath
 
     def git_commit(self, filepath: Path, title: str, auto_commit: bool = False) -> bool:
-        """提交到Git"""
+        """提交到Git（提交前验证Git用户配置，避免中间状态）"""
         if not auto_commit:
             return False
 
         try:
             os.chdir(self.VAULT_ROOT)
-            subprocess.run(["git", "add", str(filepath.relative_to(self.VAULT_ROOT))], check=True)
+
+            # 验证 Git 配置，避免提交失败后留下已暂存但未提交的中间状态
+            result = subprocess.run(
+                ["git", "config", "user.name"],
+                capture_output=True, text=True
+            )
+            if not result.stdout.strip():
+                print("⚠️  Git user.name 未配置，跳过提交")
+                print("   请运行：git config user.name '你的名字'")
+                return False
+
+            subprocess.run(
+                ["git", "add", str(filepath.relative_to(self.VAULT_ROOT))],
+                check=True
+            )
             subprocess.run([
                 "git", "commit", "-m",
                 f"feat: 添加笔记 - {title[:50]}\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
@@ -240,7 +316,7 @@ category: {category}
     def run(self, auto_commit: bool = False) -> bool:
         """执行完整的转换流程"""
         try:
-            print("📋 Claude输出导入工具 v1.0")
+            print("📋 Claude输出导入工具 v1.1")
             print("-" * 50)
 
             # 1. 读取粘贴板
