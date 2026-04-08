@@ -119,6 +119,9 @@ def _is_code_line(line: str) -> bool:
         r'<\w+>|</\w+>',              # HTML 标签
         r'=>|->|\.\.\.',               # 箭头/省略号
         r'^\s*\w+:\s*\w',             # key: value
+        r'\.\w{2,5}(\s|$)',           # 含文件扩展名（.json .yaml .txt 等）
+        r'^(jd|ffmpeg|kubectl|helm|terraform|ansible|vault|aws|gcloud|az|gh|wget|tar|zip|unzip|chmod|chown|mkdir|rm|cp|mv)\s', # 常见 CLI 工具
+        r'-{1,2}[a-zA-Z][\w-]*',      # 命令行选项（-f / --flag）
     ]
     return any(re.search(p, stripped) for p in code_patterns)
 
@@ -420,8 +423,20 @@ class ClaudeToObsidian:
         url_pattern = r'https?://[^\s\)\]]*'
         return re.findall(url_pattern, content)
 
+    # 标题含这些词时强制归入工具库
+    TOOL_TITLE_PATTERNS = [
+        r'使用指南', r'如何使用', r'命令.*使用', r'使用.*命令',
+        r'.*命令$', r'使用教程', r'快速上手', r'入门指南',
+    ]
+
     def classify_content(self, content: str) -> str:
         """自动分类内容（关键词计分，取得分最高的分类）"""
+        # 优先规则：标题含"使用指南/命令"类词语 → 强制归入工具库
+        title = self.extract_title(content)
+        for pattern in self.TOOL_TITLE_PATTERNS:
+            if re.search(pattern, title):
+                return "工具库"
+
         content_lower = content.lower()
         scores: Dict[str, int] = {}
 
