@@ -6,7 +6,7 @@
 
 ### 文件夹结构
 - [x] 创建 `~/Notes/claude-knowledge`
-- [x] 创建子目录：00-inbox, 10-claude-outputs, 20-knowledge-base 等
+- [x] 创建子目录：inbox, claude-outputs, knowledge-base 等
 - [x] 创建 `_templates` 和 `_media` 目录
 
 ### 配置文件
@@ -75,7 +75,7 @@ python claude-to-obsidian.py
 ```
 
 - [ ] 脚本运行无错误
-- [ ] 在10-claude-outputs中看到新笔记
+- [ ] 在claude-outputs中看到新笔记
 - [ ] 新笔记包含正确的元数据和标签
 - [ ] Obsidian自动刷新显示新笔记（或手动Ctrl+R）
 
@@ -149,7 +149,7 @@ git remote -v
 ### 创建主题中心页面（可选）
 
 ```bash
-# 在20-knowledge-base中创建：
+# 在knowledge-base中创建：
 # - Python.md
 # - JavaScript.md
 # - Frontend.md

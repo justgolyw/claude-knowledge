@@ -50,7 +50,7 @@ python claude-to-obsidian.py
 ...
 
 ✅ 导入完成！
-📍 笔记已保存到：10-claude-outputs/代码片段/笔记标题.md
+📍 笔记已保存到：claude-outputs/代码片段/笔记标题.md
 ```
 
 ### 第3步（可选）：连接GitHub备份
@@ -83,7 +83,7 @@ python ~/Notes/claude-knowledge/claude-to-obsidian.py
 #  - 从粘贴板读取内容
 #  - 识别为"代码"分类
 #  - 添加标签：#claude-output, #待整理, #Python, #代码
-#  - 保存到：10-claude-outputs/代码片段/
+#  - 保存到：claude-outputs/代码片段/
 
 # 3️⃣ 在Obsidian中查看新笔记
 # （自动刷新，或按 Ctrl+R）

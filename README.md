@@ -6,18 +6,18 @@
 
 ```
 claude-knowledge/
-├── 00-inbox/                # 📥 临时收集区 - 快速捕获的内容待整理
-├── 10-claude-outputs/       # 📄 Claude原始输出 - 按类型分类
+├── inbox/                # 📥 临时收集区 - 快速捕获的内容待整理
+├── claude-outputs/       # 📄 Claude原始输出 - 按类型分类
 │   ├── 代码片段/            # 代码和技术实现
 │   ├── 理论概念/            # 理论和概念解释
 │   └── 工具库/              # 工具、库和框架
-├── 20-knowledge-base/       # 📚 精整理知识库 - 深度学习资料
+├── knowledge-base/       # 📚 精整理知识库 - 深度学习资料
 │   ├── Python/              # Python相关
 │   ├── 前端/                # 前端开发
 │   ├── 架构设计/            # 系统架构
 │   └── 最佳实践/            # 最佳实践集合
-├── 30-projects/             # 🚀 项目笔记 - 进行中的项目
-├── 40-references/           # 🔗 参考资源 - 外部链接和参考
+├── projects/             # 🚀 项目笔记 - 进行中的项目
+├── references/           # 🔗 参考资源 - 外部链接和参考
 ├── _templates/              # 📋 笔记模板
 └── _media/                  # 🖼️ 媒体文件
 ```
@@ -58,9 +58,9 @@ claude-knowledge/
 
 ### 知识整理流程
 ```
-1. 内容进入 00-inbox
+1. 内容进入 inbox
 2. 在 Obsidian 中审查和标记
-3. 移动到 10-claude-outputs 或 20-knowledge-base
+3. 移动到 claude-outputs 或 knowledge-base
 4. 添加双向链接关联相关内容
 5. 定期查看 Graph 视图，发现知识关联
 ```

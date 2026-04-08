@@ -25,6 +25,266 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+
+def restore_markdown(text: str) -> str:
+    """
+    将 Claude Code 终端渲染的纯文本还原为 Markdown 格式。
+
+    终端渲染规律：
+    - 标题（## xxx）：缩进的短文字行，前后有空行，无代码语法
+    - 代码块：缩进的多行文字，含代码语法特征（#、|、echo、$等）
+    - ASCII 表格：┌─┬─┐ 样式
+    - 列表（- item）：原样保留
+    - 加粗（**text**）：原样保留
+    - ● 符号：终端列表标记，还原为 -
+    """
+    # 先清理终端特有的 ● 列表标记
+    text = re.sub(r'^●\s+', '- ', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*●\s+', '- ', text, flags=re.MULTILINE)
+
+    lines = text.splitlines()
+    result: List[str] = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # 检测 ASCII 表格（┌ 开头，允许有缩进）→ 转换为 Markdown 表格
+        if line.lstrip().startswith('┌'):
+            table_lines, consumed = _parse_ascii_table(lines, i)
+            result.extend(table_lines)
+            i += consumed
+            continue
+
+        # 检测缩进块：以2+空格开头，非列表项
+        if re.match(r'^  \S', line) and not re.match(r'^  [-*+\d]', line):
+            block_lines, consumed = _collect_indented_block(lines, i)
+            converted = _convert_indented_block(block_lines)
+            result.extend(converted)
+            i += consumed
+            continue
+
+        result.append(line)
+        i += 1
+
+    return '\n'.join(result)
+
+
+def _collect_indented_block(lines: List[str], start: int) -> Tuple[List[str], int]:
+    """收集从 start 开始的连续缩进块（允许内部空行）"""
+    block = []
+    i = start
+
+    while i < len(lines):
+        line = lines[i]
+
+        if not line.strip():
+            # 空行：向前看，若后续还有缩进行则保留
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines) and re.match(r'^  ', lines[j]):
+                block.append('')
+                i += 1
+                continue
+            else:
+                break
+
+        # 非缩进行 → 结束
+        if not re.match(r'^  ', line):
+            break
+
+        block.append(line)
+        i += 1
+
+    # 去掉尾部空行
+    while block and not block[-1].strip():
+        block.pop()
+
+    return block, i - start
+
+
+def _is_code_line(line: str) -> bool:
+    """判断一行是否含有代码特征"""
+    stripped = line.strip()
+    code_patterns = [
+        r'^#',                          # 注释
+        r'[|&;]',                       # 管道/分隔符
+        r'\$\w+|\$\{',                  # shell 变量
+        r"echo |curl |grep |awk |sed |cat |ls |cd |git |docker ", # 常用命令
+        r"jq |python |pip |npm |go |cargo ",  # 工具命令
+        r'^\w+\s*[=({]',               # 赋值/函数调用
+        r'["\'].*["\']',               # 引号字符串
+        r'^\s*\w+\(.*\)',              # 函数调用
+        r'<\w+>|</\w+>',              # HTML 标签
+        r'=>|->|\.\.\.',               # 箭头/省略号
+        r'^\s*\w+:\s*\w',             # key: value
+    ]
+    return any(re.search(p, stripped) for p in code_patterns)
+
+
+def _convert_indented_block(block: List[str]) -> List[str]:
+    """
+    将缩进块转换：
+    - 纯文字短行（无代码特征）→ Markdown 标题
+    - 含代码特征的多行 → 代码块
+    - ASCII 表格行 → Markdown 表格
+    """
+    if not block:
+        return []
+
+    result: List[str] = []
+    i = 0
+
+    while i < len(block):
+        line = block[i]
+        stripped = line.strip()
+
+        if not stripped:
+            result.append('')
+            i += 1
+            continue
+
+        # ASCII 表格
+        if stripped.startswith('┌'):
+            table_lines, consumed = _parse_ascii_table(
+                [l.strip() for l in block], i  # 去缩进后传入
+            )
+            result.extend(table_lines)
+            i += consumed
+            continue
+
+        # 判断这一行是否像"标题"：单行、无代码特征、长度适中
+        is_heading_candidate = (
+            len(stripped) < 60
+            and not _is_code_line(line)
+            and not stripped.startswith('-')
+            and not stripped.startswith('```')
+        )
+
+        if is_heading_candidate:
+            result.append(f'## {stripped}')
+            i += 1
+            continue
+
+        # 否则，收集连续的代码行组成代码块
+        code_segment: List[str] = []
+        while i < len(block):
+            l = block[i]
+            s = l.strip()
+            if not s:
+                j = i + 1
+                while j < len(block) and not block[j].strip():
+                    j += 1
+                if j < len(block) and _is_code_line(block[j]):
+                    code_segment.append('')
+                    i += 1
+                    continue
+                else:
+                    break
+            # 遇到标题候选行或表格 → 停止
+            if s.startswith('┌'):
+                break
+            if len(s) < 60 and not _is_code_line(l) and not s.startswith('-'):
+                break
+            code_segment.append(l)
+            i += 1
+
+        # 去掉公共缩进
+        non_empty = [l for l in code_segment if l.strip()]
+        if non_empty:
+            min_indent = min(len(l) - len(l.lstrip()) for l in non_empty)
+            code_segment = [l[min_indent:] if l.strip() else '' for l in code_segment]
+
+        # 去尾部空行
+        while code_segment and not code_segment[-1].strip():
+            code_segment.pop()
+
+        if code_segment:
+            lang = _guess_language(code_segment)
+            result.append(f'```{lang}')
+            result.extend(code_segment)
+            result.append('```')
+
+    return result
+
+
+def _guess_language(code_lines: List[str]) -> str:
+    """根据代码内容猜测语言"""
+    code = '\n'.join(code_lines).lower()
+    if re.search(r'\bjq\b|select\(|\.\[\]|jq \'', code):
+        return 'bash'
+    if re.search(r'^\s*(def |import |from .* import|class )', code, re.M):
+        return 'python'
+    if re.search(r'^\s*(function |const |let |var |=>)', code, re.M):
+        return 'javascript'
+    if re.search(r'^\s*(package |func |import ")', code, re.M):
+        return 'go'
+    if re.search(r'^\s*(#include|int main|std::)', code, re.M):
+        return 'cpp'
+    if re.search(r'\b(curl|echo|grep|awk|sed|bash|sh|apt|git|docker|kubectl)\b', code):
+        return 'bash'
+    if re.search(r'^\s*(SELECT|INSERT|UPDATE|DELETE|CREATE)\b', code, re.M | re.I):
+        return 'sql'
+    return ''
+
+
+def _parse_ascii_table(lines: List[str], start: int) -> Tuple[List[str], int]:
+    """
+    将 ASCII 框线表格转换为 Markdown 表格。
+    支持格式：
+      ┌───┬───┐
+      │ A │ B │   ← 表头行
+      ├───┼───┤   ← 第一个 ├ 表示表头结束
+      │ a │ b │
+      ├───┼───┤   ← 后续 ├ 忽略（Markdown 表格无需内部分隔）
+      └───┴───┘
+    """
+    i = start
+    data_rows: List[List[str]] = []
+    header_separator_inserted = False
+
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            break
+        # 数据行
+        if line.startswith('│'):
+            cells = [c.strip() for c in line.strip('│').split('│')]
+            data_rows.append(cells)
+        # 第一个 ├ → 在此处插入表头分隔（只插一次）
+        elif line.startswith('├') and not header_separator_inserted:
+            if data_rows:
+                data_rows.append(None)  # type: ignore  # 占位符，后续转为 ---
+                header_separator_inserted = True
+        # ┌ └ 及后续 ├ → 跳过
+        elif re.match(r'^[┌└├]', line):
+            pass
+        else:
+            break
+        i += 1
+
+    if not data_rows:
+        return [lines[start]], 1
+
+    # 构建 Markdown 表格
+    real_rows = [r for r in data_rows if r is not None]
+    cols = len(real_rows[0]) if real_rows else 1
+    separator = '| ' + ' | '.join(['---'] * cols) + ' |'
+
+    md_rows: List[str] = []
+    for row in data_rows:
+        if row is None:
+            md_rows.append(separator)
+        else:
+            md_rows.append('| ' + ' | '.join(row) + ' |')
+
+    # 若没有 ├ 分隔行，默认在第一行后插入
+    if not header_separator_inserted and len(md_rows) >= 1:
+        md_rows.insert(1, separator)
+
+    return md_rows, i - start
+
 try:
     import pyperclip
 except ImportError:
@@ -42,23 +302,25 @@ class ClaudeToObsidian:
     # 内容分类规则（关键词 + 权重）
     CATEGORIES: Dict[str, dict] = {
         "代码": {
-            # 代码块标记权重高，单个代码块足以判定
-            "keywords": {"```": 3, "import ": 2, "def ": 2, "class ": 2,
+            # 代码块权重降低，避免压制其他分类
+            "keywords": {"```": 1, "import ": 2, "def ": 2, "class ": 2,
                          "function ": 2, "const ": 1, "let ": 1, "var ": 1,
                          "return ": 1, "if (": 1, "for (": 1},
-            "path": "10-claude-outputs/代码片段"
+            "path": "claude-outputs/代码片段"
         },
         "理论概念": {
             "keywords": {"解释": 2, "什么是": 3, "原理": 2, "理解": 1,
                          "背景": 1, "基础": 2, "介绍": 2, "概念": 3,
                          "定义": 2, "区别": 1},
-            "path": "10-claude-outputs/理论概念"
+            "path": "claude-outputs/理论概念"
         },
         "工具库": {
             "keywords": {"库": 2, "工具": 2, "框架": 2, "包": 1,
                          "package": 2, "library": 3, "framework": 3,
-                         "npm": 3, "pip": 3, "安装": 1, "使用方法": 1},
-            "path": "10-claude-outputs/工具库"
+                         "npm": 3, "pip": 3, "安装": 1, "使用方法": 3,
+                         "如何使用": 3, "用法": 2, "命令": 2, "教程": 2,
+                         "参数": 1, "选项": 1, "示例": 1},
+            "path": "claude-outputs/工具库"
         },
     }
 
@@ -92,29 +354,48 @@ class ClaudeToObsidian:
             raise ValueError(f"读取粘贴板失败：{e}")
 
     def extract_title(self, content: str) -> str:
-        """从内容中提取标题，优先取一级标题"""
+        """从内容中提取标题，优先取一级标题，跳过代码块内的行"""
         lines = content.split('\n')
 
-        # 优先匹配一级标题（# 开头，且 # 后无更多 #）
+        # 过滤掉代码块内的行，避免把代码注释当成标题
+        non_code_lines: List[str] = []
+        in_code_block = False
         for line in lines:
+            if line.strip().startswith('```'):
+                in_code_block = not in_code_block
+                continue
+            if not in_code_block:
+                non_code_lines.append(line)
+
+        # 优先匹配一级标题（# 开头，且 # 后无更多 #）
+        for line in non_code_lines:
             stripped = line.strip()
             if re.match(r'^#\s+\S', stripped):
                 title = stripped.lstrip('#').strip()
                 return title[:80]
 
-        # 退而取任意级别标题
-        for line in lines:
+        # 次选：代码块外第一个普通文字行（不以 # - * 等特殊符号开头）
+        plain_skip = [
+            r'^#',        # Markdown 标题 / 代码注释 / shebang
+            r'^[-*+]',    # 列表项
+            r'^>',        # 引用块
+            r'^`',        # 行内代码
+            r'^import ',
+            r'^from ',
+            r'^[-=]{3,}', # 分隔线
+        ]
+        for line in non_code_lines:
+            stripped = line.strip()
+            if stripped and not any(re.match(p, stripped) for p in plain_skip):
+                return stripped[:80]
+
+        # 最后回退到任意级别的 Markdown 标题（## ### 等）
+        for line in non_code_lines:
             stripped = line.strip()
             if stripped.startswith('#'):
                 title = stripped.lstrip('#').strip()
                 if title:
                     return title[:80]
-
-        # 最后用第一个非空行
-        for line in lines:
-            stripped = line.strip()
-            if stripped:
-                return stripped[:80]
 
         return "未命名笔记"
 
@@ -199,31 +480,14 @@ class ClaudeToObsidian:
         date_str = now.strftime("%Y-%m-%d %H:%M")
 
         # Frontmatter
-        frontmatter = f"""---
-date: {date_str}
-tags: {json.dumps(tags)}
-source: Claude AI
-category: {category}
----
+        frontmatter = f"""# {title}
 
-# {title}
-
-## 📝 来源信息
-- **来源**：Claude AI
-- **导入日期**：{now.strftime("%Y-%m-%d")}
-- **分类**：{category}
-
-## 💡 核心内容
+> 导入自 Claude AI · {now.strftime("%Y-%m-%d")} · {category}
 
 {content}
 
-## 🏷️ 标签
-{' '.join(f"#{tag}" for tag in tags)}
-
 ---
-
-**创建时间**：{date_str}
-**状态**：待整理
+*标签：{' '.join(f"#{tag}" for tag in tags)}*
 """
         return frontmatter
 
@@ -263,7 +527,7 @@ category: {category}
         if category in self.CATEGORIES:
             folder = self.VAULT_ROOT / self.CATEGORIES[category]["path"]
         else:
-            folder = self.VAULT_ROOT / "10-claude-outputs/其他"
+            folder = self.VAULT_ROOT / "claude-outputs/其他"
 
         folder.mkdir(parents=True, exist_ok=True)
 
@@ -324,10 +588,20 @@ category: {category}
             content = self.get_clipboard()
             print(f"✓ 读取成功 ({len(content)} 字符)")
 
+            # 1.5 还原终端渲染的纯文本为 Markdown
+            print("\n🔄 还原 Markdown 格式...")
+            content = restore_markdown(content)
+
             # 2. 提取标题
             print("\n📝 提取标题...")
             title = self.extract_title(content)
             print(f"✓ 标题：{title}")
+
+            # 去掉 content 开头与标题重复的行
+            lines = content.splitlines()
+            while lines and lines[0].strip().lstrip('#').strip() == title:
+                lines.pop(0)
+            content = '\n'.join(lines).lstrip('\n')
 
             # 3. 分类
             print("\n🏷️  分类内容...")

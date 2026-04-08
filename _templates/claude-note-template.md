@@ -1,9 +1,3 @@
----
-date: <%tp.date.now("YYYY-MM-DD HH:mm")%>
-tags: [claude-output, 待整理]
-source: Claude AI
-category: 
----
 
 # <%tp.prompt("笔记标题")%>
 

@@ -11,11 +11,11 @@
 ### 1. 本地知识库（`~/Notes/claude-knowledge`）
 ```
 ✅ 完整的文件夹结构
-  ├── 00-inbox/              # 临时收集区
-  ├── 10-claude-outputs/     # Claude原始输出
-  ├── 20-knowledge-base/     # 精整理知识库
-  ├── 30-projects/           # 项目笔记
-  ├── 40-references/         # 参考资源
+  ├── inbox/              # 临时收集区
+  ├── claude-outputs/     # Claude原始输出
+  ├── knowledge-base/     # 精整理知识库
+  ├── projects/           # 项目笔记
+  ├── references/         # 参考资源
   ├── _templates/            # 笔记模板
   └── _media/                # 媒体文件
 
@@ -68,7 +68,7 @@ python claude-to-obsidian.py  (自动处理)
       ↓
 自动分类 + 提取标签 + 生成元数据
       ↓
-保存到~/Notes/claude-knowledge/10-claude-outputs/
+保存到~/Notes/claude-knowledge/claude-outputs/
       ↓
 Obsidian自动刷新显示
       ↓
@@ -87,7 +87,7 @@ Git自动提交备份 (每30分钟或手动)
       ↓
 添加双向链接 [[相关笔记]]
       ↓
-移动到20-knowledge-base（精整理）
+移动到knowledge-base（精整理）
       ↓
 打标签和分类
       ↓
