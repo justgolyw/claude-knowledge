@@ -1,15 +1,7 @@
 # fd 命令使用指南
 
-> 导入自 Claude AI · 2026-04-14 · 工具库
-
-                                                                                                               
-- 我来帮你介绍 fd 命令的使用。                                                                                 
-                                                                                                               
-- Skill(find-skills)                                                                                           
-## ⎿  Successfully loaded skill
-                                                                                                               
-- fd 是 find 命令的现代替代品，速度快、语法简洁。以下是使用指南：                                              
-                                                                                                               
+> 导入自 Claude AI · 2026-04-14 · 工具库         
+- fd 是 find 命令的现代替代品，速度快、语法简洁。以下是使用指南：                                                                                                                                             
 ## 安装
 
 ```bash
