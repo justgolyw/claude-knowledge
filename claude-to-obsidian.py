@@ -4,7 +4,7 @@
 Claude输出到Obsidian的快速导入工具
 
 功能：
-- 从粘贴板读取Claude输出
+- 从粘贴板读取Claude输出（优先读取HTML富文本，用markitdown精确转换）
 - 自动解析和分类内容（关键词计分算法）
 - 生成Obsidian格式的Markdown笔记
 - 自动添加元数据和标签
@@ -16,6 +16,7 @@ Claude输出到Obsidian的快速导入工具
 """
 
 import hashlib
+import io
 import os
 import re
 import sys
@@ -295,6 +296,49 @@ except ImportError:
     print("请运行：pip install pyperclip")
     sys.exit(1)
 
+try:
+    from markitdown import MarkItDown, StreamInfo
+    _MARKITDOWN_AVAILABLE = True
+except ImportError:
+    _MARKITDOWN_AVAILABLE = False
+
+
+def _get_clipboard_html() -> Optional[bytes]:
+    """
+    尝试通过 xclip 获取剪贴板的 HTML 富文本格式内容。
+    仅在 Linux/X11 环境可用；失败时返回 None。
+    """
+    try:
+        result = subprocess.run(
+            ["xclip", "-selection", "clipboard", "-t", "text/html", "-o"],
+            capture_output=True,
+            timeout=3,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def convert_html_to_markdown(html_bytes: bytes) -> Optional[str]:
+    """
+    使用 markitdown 将 HTML 字节流精确转换为 Markdown。
+    返回转换后的字符串；失败时返回 None。
+    """
+    if not _MARKITDOWN_AVAILABLE:
+        return None
+    try:
+        md_converter = MarkItDown()
+        result = md_converter.convert(
+            io.BytesIO(html_bytes),
+            stream_info=StreamInfo(mimetype="text/html", charset="utf-8"),
+        )
+        text = result.text_content or ""
+        return text.strip() if text.strip() else None
+    except Exception:
+        return None
+
 
 class ClaudeToObsidian:
     """Claude输出转Obsidian笔记转换器"""
@@ -346,13 +390,27 @@ class ClaudeToObsidian:
         if not self.VAULT_ROOT.exists():
             raise ValueError(f"知识库目录不存在：{self.VAULT_ROOT}")
 
-    def get_clipboard(self) -> str:
-        """从粘贴板读取内容"""
+    def get_clipboard(self) -> Tuple[str, str]:
+        """
+        从剪贴板读取内容，返回 (markdown文本, 来源描述)。
+
+        优先级：
+        1. HTML 富文本（Claude 网页端复制）→ markitdown 精确转换
+        2. 纯文本（Claude Code 终端复制）→ restore_markdown 启发式还原
+        """
+        # --- 尝试读取 HTML 富文本 ---
+        html_bytes = _get_clipboard_html()
+        if html_bytes:
+            md_text = convert_html_to_markdown(html_bytes)
+            if md_text:
+                return md_text, "HTML（markitdown转换）"
+
+        # --- 回退：读取纯文本 ---
         try:
             content = pyperclip.paste()
             if not content.strip():
                 raise ValueError("粘贴板为空")
-            return content
+            return content, "纯文本"
         except Exception as e:
             raise ValueError(f"读取粘贴板失败：{e}")
 
@@ -595,17 +653,22 @@ class ClaudeToObsidian:
     def run(self, auto_commit: bool = False) -> bool:
         """执行完整的转换流程"""
         try:
-            print("📋 Claude输出导入工具 v1.1")
+            print("📋 Claude输出导入工具 v1.2")
             print("-" * 50)
 
             # 1. 读取粘贴板
             print("📥 从粘贴板读取内容...")
-            content = self.get_clipboard()
-            print(f"✓ 读取成功 ({len(content)} 字符)")
+            content, source = self.get_clipboard()
+            print(f"✓ 读取成功 ({len(content)} 字符) [{source}]")
 
-            # 1.5 还原终端渲染的纯文本为 Markdown
-            print("\n🔄 还原 Markdown 格式...")
-            content = restore_markdown(content)
+            # 1.5 格式还原
+            #   - HTML 路径：markitdown 已输出标准 Markdown，无需再处理
+            #   - 纯文本路径：启发式还原终端渲染格式
+            if "纯文本" in source:
+                print("\n🔄 还原 Markdown 格式（纯文本模式）...")
+                content = restore_markdown(content)
+            else:
+                print(f"\n✅ 已通过 markitdown 精确转换，跳过启发式还原")
 
             # 2. 提取标题
             print("\n📝 提取标题...")
