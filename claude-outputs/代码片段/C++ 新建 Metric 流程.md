@@ -181,16 +181,16 @@ alwayslink = 1,  # 必须！否则静态链接会优化掉注册宏
 ```
 ## 文件清单
 
-| 操作 | 文件 |
-| --- | --- |
-| 新建 | simulation_proto/your_metric_name.proto |
-| 修改 | simulation_proto/scenario_metric.proto |
-| 修改 | simulation_proto/frame_passing_result.proto |
-| 新建 | scenario_evaluator/metrics/your_metric_name_handler.h |
-| 新建 | scenario_evaluator/metrics/your_metric_name_handler.cpp |
-| 修改 | scenario_evaluator/metric_topic_map.h |
-| 修改 | scenario_evaluator/metrics/BUILD.bazel |
-| 修改 | scenario_evaluator/BUILD.bazel |
+| 操作  | 文件                                                      |     |
+| --- | ------------------------------------------------------- | --- |
+| 新建  | simulation_proto/your_metric_name.proto                 |     |
+| 修改  | simulation_proto/scenario_metric.proto                  |     |
+| 修改  | simulation_proto/frame_passing_result.proto             |     |
+| 新建  | scenario_evaluator/metrics/your_metric_name_handler.h   |     |
+| 新建  | scenario_evaluator/metrics/your_metric_name_handler.cpp |     |
+| 修改  | scenario_evaluator/metric_topic_map.h                   |     |
+| 修改  | scenario_evaluator/metrics/BUILD.bazel                  |     |
+| 修改  | scenario_evaluator/BUILD.bazel                          |     |
 
 ```
 ▎ 核心机制：REGISTER_METRIC_HANDLER 宏在 .cpp 末尾生成一个静态工厂类并自注册到 MetricHandlerFactory，alwayslink=1                    
