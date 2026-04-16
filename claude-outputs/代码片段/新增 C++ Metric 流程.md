@@ -1,4 +1,4 @@
-# 新增 C++ Metric 流程
+# 新增 C++ Metric 流程（以 hmi_output_check_metric 为例）
 
 > 导入自 Claude AI · 2026-04-16 · 工具库
 
@@ -23,7 +23,7 @@ simulation/simulation/simulation_proto/hmi_output_check_metric.proto
 ```
 ---
 ```
-## 2. 修改 Proto 汇总文件
+## 2. 修改 Proto 汇总文件（注册 metric 到 oneof）
 
 ## 修改文件 1：
 ```
