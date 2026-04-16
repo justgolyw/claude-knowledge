@@ -4,7 +4,7 @@
 Claude输出到Obsidian的快速导入工具
 
 功能：
-- 从粘贴板读取Claude输出（优先读取HTML富文本，用markitdown精确转换）
+- 从粘贴板读取Claude输出
 - 自动解析和分类内容（关键词计分算法）
 - 生成Obsidian格式的Markdown笔记
 - 自动添加元数据和标签
@@ -16,7 +16,6 @@ Claude输出到Obsidian的快速导入工具
 """
 
 import hashlib
-import io
 import os
 import re
 import sys
@@ -109,26 +108,20 @@ def _is_code_line(line: str) -> bool:
     """判断一行是否含有代码特征"""
     stripped = line.strip()
     code_patterns = [
-        r'^#',                          # 注释 / shebang（shell/Python）
-        r'^//',                         # C++/Java/JS 单行注释
-        r'^/\*',                        # C++ 多行注释开头
+        r'^#',                          # 注释
         r'[|&;]',                       # 管道/分隔符
         r'\$\w+|\$\{',                  # shell 变量
         r"echo |curl |grep |awk |sed |cat |ls |cd |git |docker ", # 常用命令
-        r"jq |python |pip |npm |go |cargo |bazel ",  # 工具命令（含 bazel）
+        r"jq |python |pip |npm |go |cargo ",  # 工具命令
         r'^\w+\s*[=({]',               # 赋值/函数调用
         r'["\'].*["\']',               # 引号字符串
         r'^\s*\w+\(.*\)',              # 函数调用
         r'<\w+>|</\w+>',              # HTML 标签
         r'=>|->|\.\.\.',               # 箭头/省略号
-        r'^\s*\w+:\s*\w',             # key: value (yaml/bazel)
-        r'\.\w{2,5}(\s|$)',           # 含文件扩展名（.json .yaml .proto 等）
+        r'^\s*\w+:\s*\w',             # key: value
+        r'\.\w{2,5}(\s|$)',           # 含文件扩展名（.json .yaml .txt 等）
         r'^(jd|ffmpeg|kubectl|helm|terraform|ansible|vault|aws|gcloud|az|gh|wget|tar|zip|unzip|chmod|chown|mkdir|rm|cp|mv)\s', # 常见 CLI 工具
         r'-{1,2}[a-zA-Z][\w-]*',      # 命令行选项（-f / --flag）
-        r'^\s*(cc_library|cc_binary|proto_library|py_library|filegroup)\(',  # Bazel BUILD
-        r'^\s*(message |enum |syntax |import |package )',  # Proto 定义
-        r'^\s*(#include|namespace |class |struct |void |int |bool |auto )',  # C++ 关键字
-        r'^\s*(assert|LOG\(|REGISTER_)',  # C++ 常用宏/调用
     ]
     return any(re.search(p, stripped) for p in code_patterns)
 
@@ -170,10 +163,6 @@ def _convert_indented_block(block: List[str]) -> List[str]:
             and not _is_code_line(line)
             and not stripped.startswith('-')
             and not stripped.startswith('```')
-            and not stripped.startswith('//')   # C++ 注释不是标题
-            and not stripped.startswith('/*')   # C++ 多行注释不是标题
-            and not stripped.startswith('}')    # 闭括号不是标题
-            and not stripped.startswith('{')    # 开括号不是标题
         )
 
         if is_heading_candidate:
@@ -236,11 +225,7 @@ def _guess_language(code_lines: List[str]) -> str:
         return 'go'
     if re.search(r'^\s*(#include|int main|std::)', code, re.M):
         return 'cpp'
-    if re.search(r'^\s*(message |enum |syntax = "proto)', code, re.M):
-        return 'protobuf'
-    if re.search(r'^\s*(cc_library|cc_binary|proto_library|py_library)\(', code, re.M):
-        return 'python'  # Bazel BUILD 文件用 python 高亮
-    if re.search(r'\b(curl|echo|grep|awk|sed|bash|sh|apt|git|docker|kubectl|bazel)\b', code):
+    if re.search(r'\b(curl|echo|grep|awk|sed|bash|sh|apt|git|docker|kubectl)\b', code):
         return 'bash'
     if re.search(r'^\s*(SELECT|INSERT|UPDATE|DELETE|CREATE)\b', code, re.M | re.I):
         return 'sql'
@@ -310,158 +295,6 @@ except ImportError:
     print("请运行：pip install pyperclip")
     sys.exit(1)
 
-try:
-    from markitdown import MarkItDown, StreamInfo
-    _MARKITDOWN_AVAILABLE = True
-except ImportError:
-    _MARKITDOWN_AVAILABLE = False
-
-
-def _get_clipboard_html() -> Optional[bytes]:
-    """
-    尝试通过 xclip 获取剪贴板的 HTML 富文本格式内容。
-    仅在 Linux/X11 环境可用；失败时返回 None。
-    """
-    try:
-        result = subprocess.run(
-            ["xclip", "-selection", "clipboard", "-t", "text/html", "-o"],
-            capture_output=True,
-            timeout=3,
-        )
-        if result.returncode == 0 and result.stdout:
-            return result.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-def convert_html_to_markdown(html_bytes: bytes) -> Optional[str]:
-    """
-    将 Claude Code 复制的 HTML 精确转换为 Markdown。
-
-    Claude Code 终端的 HTML 是 pre>div>span 带内联颜色样式的结构，
-    本质上是带语法高亮的纯文本，需提取文本后走 restore_markdown 处理。
-    语义化 HTML（含真正的 table/code 标签）则用 BeautifulSoup 处理。
-    """
-    try:
-        from bs4 import BeautifulSoup
-
-        soup = BeautifulSoup(html_bytes, "html.parser")
-
-        # 检测 Claude Code 终端格式：pre > div[style] > div > span 结构
-        pre = soup.find("pre")
-        if pre:
-            first_child = next((c for c in pre.children if getattr(c, 'name', None)), None)
-            if first_child and first_child.name == "div" and first_child.get("style"):
-                # 终端格式：逐行提取文本，去掉行尾空格（终端会填充到固定宽度）
-                lines = []
-                for div in first_child.find_all("div", recursive=False):
-                    lines.append(div.get_text().rstrip())
-                text = "\n".join(lines).strip()
-                # 走和纯文本一样的 restore_markdown 处理
-                return restore_markdown(text) if text else None
-
-        # 语义化 HTML：用 BeautifulSoup 自定义解析
-        from bs4 import NavigableString, Tag
-
-        root = soup.body or soup
-
-        def node_to_md(node, list_depth=0) -> str:
-            if isinstance(node, NavigableString):
-                return str(node)
-            tag = node.name
-            if tag is None:
-                return ""
-            children_md = lambda: "".join(node_to_md(c, list_depth) for c in node.children)
-
-            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
-                level = int(tag[1])
-                return f"\n{'#' * level} {children_md().strip()}\n\n"
-            if tag == "p":
-                return f"\n{children_md().strip()}\n"
-            if tag == "br":
-                return "\n"
-            if tag in ("strong", "b"):
-                return f"**{children_md()}**"
-            if tag in ("em", "i"):
-                return f"*{children_md()}*"
-            if tag == "code" and node.parent and node.parent.name != "pre":
-                return f"`{node.get_text()}`"
-            if tag == "pre":
-                code_node = node.find("code")
-                code_text = (code_node or node).get_text()
-                lang = ""
-                if code_node:
-                    for cls in (code_node.get("class") or []):
-                        if cls.startswith("language-"):
-                            lang = cls[len("language-"):]
-                            break
-                return f"\n```{lang}\n{code_text.rstrip()}\n```\n"
-            if tag == "table":
-                rows = node.find_all("tr")
-                if not rows:
-                    return children_md()
-                md_rows = []
-                for i, row in enumerate(rows):
-                    cells = row.find_all(["th", "td"])
-                    cell_texts = [c.get_text().strip().replace("\n", " ") for c in cells]
-                    md_rows.append("| " + " | ".join(cell_texts) + " |")
-                    if i == 0:
-                        md_rows.append("| " + " | ".join(["---"] * len(cells)) + " |")
-                return "\n" + "\n".join(md_rows) + "\n"
-            if tag in ("thead", "tbody", "tfoot", "tr", "th", "td"):
-                return children_md()
-            if tag == "ul":
-                items = []
-                for li in node.find_all("li", recursive=False):
-                    text = "".join(node_to_md(c, list_depth + 1) for c in li.children).strip()
-                    items.append("  " * list_depth + f"- {text}")
-                return "\n" + "\n".join(items) + "\n"
-            if tag == "ol":
-                items = []
-                for idx, li in enumerate(node.find_all("li", recursive=False), 1):
-                    text = "".join(node_to_md(c, list_depth + 1) for c in li.children).strip()
-                    items.append("  " * list_depth + f"{idx}. {text}")
-                return "\n" + "\n".join(items) + "\n"
-            if tag == "hr":
-                return "\n---\n"
-            if tag == "a":
-                href = node.get("href", "")
-                text = children_md().strip()
-                return f"[{text}]({href})" if href else text
-            if tag == "blockquote":
-                inner = children_md().strip()
-                return "\n" + "\n".join(f"> {l}" for l in inner.splitlines()) + "\n"
-            return children_md()
-
-        md = node_to_md(root).strip()
-        md = re.sub(r'\n{3,}', '\n\n', md)
-        return md if md else None
-
-    except Exception:
-        pass
-
-    # 回退：markitdown
-    if not _MARKITDOWN_AVAILABLE:
-        return None
-    try:
-        md_converter = MarkItDown()
-        result = md_converter.convert(
-            io.BytesIO(html_bytes),
-            stream_info=StreamInfo(mimetype="text/html", charset="utf-8"),
-        )
-        text = (result.text_content or "").strip()
-        if not text:
-            return None
-        lines = text.splitlines()
-        if lines and lines[0].strip() == '```' and lines[-1].strip() == '```':
-            inner = '\n'.join(lines[1:-1])
-            if inner.count('```') == 0:
-                text = inner.strip()
-        return text
-    except Exception:
-        return None
-
 
 class ClaudeToObsidian:
     """Claude输出转Obsidian笔记转换器"""
@@ -513,32 +346,18 @@ class ClaudeToObsidian:
         if not self.VAULT_ROOT.exists():
             raise ValueError(f"知识库目录不存在：{self.VAULT_ROOT}")
 
-    def get_clipboard(self) -> Tuple[str, str]:
-        """
-        从剪贴板读取内容，返回 (markdown文本, 来源描述)。
-
-        优先级：
-        1. HTML 富文本（Claude 网页端复制）→ markitdown 精确转换
-        2. 纯文本（Claude Code 终端复制）→ restore_markdown 启发式还原
-        """
-        # --- 尝试读取 HTML 富文本 ---
-        html_bytes = _get_clipboard_html()
-        if html_bytes:
-            md_text = convert_html_to_markdown(html_bytes)
-            if md_text:
-                return md_text, "HTML（markitdown转换）"
-
-        # --- 回退：读取纯文本 ---
+    def get_clipboard(self) -> str:
+        """从粘贴板读取内容"""
         try:
             content = pyperclip.paste()
             if not content.strip():
                 raise ValueError("粘贴板为空")
-            return content, "纯文本"
+            return content
         except Exception as e:
             raise ValueError(f"读取粘贴板失败：{e}")
 
     def extract_title(self, content: str) -> str:
-        """从内容中提取标题：优先取第一行普通文字，其次取一级标题"""
+        """从内容中提取标题，优先取一级标题，跳过代码块内的行"""
         lines = content.split('\n')
 
         # 过滤掉代码块内的行，避免把代码注释当成标题
@@ -551,32 +370,29 @@ class ClaudeToObsidian:
             if not in_code_block:
                 non_code_lines.append(line)
 
-        # 优先：代码块外第一个普通文字行（不以特殊符号开头）
-        # Claude Code 的输出标题通常就是第一行纯文字，没有 # 前缀
-        plain_skip = [
-            r'^#{1,6}\s',     # Markdown 标题（留给次选）
-            r'^[-*+]\s',      # 列表项（紧跟空格，避免误匹配 C++）
-            r'^>',            # 引用块
-            r'^`',            # 行内代码
-            r'^\|',           # Markdown 表格行
-            r'^[❯$%]\s',     # shell 提示符行
-            r'^import ',
-            r'^from ',
-            r'^[-=]{3,}',     # 分隔线
-        ]
-        for line in non_code_lines:
-            stripped = line.strip()
-            if stripped and not any(re.match(p, stripped) for p in plain_skip):
-                return stripped[:80]
-
-        # 次选：一级标题（# 开头）
+        # 优先匹配一级标题（# 开头，且 # 后无更多 #）
         for line in non_code_lines:
             stripped = line.strip()
             if re.match(r'^#\s+\S', stripped):
                 title = stripped.lstrip('#').strip()
                 return title[:80]
 
-        # 最后回退：任意级别标题
+        # 次选：代码块外第一个普通文字行（不以 # - * 等特殊符号开头）
+        plain_skip = [
+            r'^#',        # Markdown 标题 / 代码注释 / shebang
+            r'^[-*+]',    # 列表项
+            r'^>',        # 引用块
+            r'^`',        # 行内代码
+            r'^import ',
+            r'^from ',
+            r'^[-=]{3,}', # 分隔线
+        ]
+        for line in non_code_lines:
+            stripped = line.strip()
+            if stripped and not any(re.match(p, stripped) for p in plain_skip):
+                return stripped[:80]
+
+        # 最后回退到任意级别的 Markdown 标题（## ### 等）
         for line in non_code_lines:
             stripped = line.strip()
             if stripped.startswith('#'):
@@ -779,22 +595,17 @@ class ClaudeToObsidian:
     def run(self, auto_commit: bool = False) -> bool:
         """执行完整的转换流程"""
         try:
-            print("📋 Claude输出导入工具 v1.2")
+            print("📋 Claude输出导入工具 v1.1")
             print("-" * 50)
 
             # 1. 读取粘贴板
             print("📥 从粘贴板读取内容...")
-            content, source = self.get_clipboard()
-            print(f"✓ 读取成功 ({len(content)} 字符) [{source}]")
+            content = self.get_clipboard()
+            print(f"✓ 读取成功 ({len(content)} 字符)")
 
-            # 1.5 格式还原
-            #   - HTML 路径：markitdown 已输出标准 Markdown，无需再处理
-            #   - 纯文本路径：启发式还原终端渲染格式
-            if "纯文本" in source:
-                print("\n🔄 还原 Markdown 格式（纯文本模式）...")
-                content = restore_markdown(content)
-            else:
-                print(f"\n✅ 已通过 markitdown 精确转换，跳过启发式还原")
+            # 1.5 还原终端渲染的纯文本为 Markdown
+            print("\n🔄 还原 Markdown 格式...")
+            content = restore_markdown(content)
 
             # 2. 提取标题
             print("\n📝 提取标题...")
