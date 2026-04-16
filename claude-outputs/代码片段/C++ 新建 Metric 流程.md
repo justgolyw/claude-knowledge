@@ -13,13 +13,15 @@
 ```go
 syntax = "proto3";
 package xpilot.simulation.proto;
-```
 
-## message YourMetricName {
+message YourMetricName {
+```
 ## // metric 输入参数（场景配置）
 ## }
 
-## message YourMetricNameResult {
+```protobuf
+message YourMetricNameResult {
+```
 ## // metric 输出字段（每帧记录）
 ## }
 
@@ -57,9 +59,11 @@ YourMetricNameResult your_metric_name_result = 278;
 ```
 ## // 按需 include 所需消息类型头文件
 
-## namespace xpilot::simulation::scenario_evaluator {
+```python
+namespace xpilot::simulation::scenario_evaluator {
 
-## class YourMetricNameHandler : public MetricHandlerBase {
+class YourMetricNameHandler : public MetricHandlerBase {
+```
 ## private:
 ```
 proto::FramePassingResult* frame_passing_result_ = nullptr;
@@ -89,9 +93,9 @@ void ProcessTopicA(const SomeMsgType& msg, int64_t system_time);
 ```cpp
 #include "your_metric_name_handler.h"
 #include "simulation/sim_common/topics.h"
-```
 
-## namespace xpilot::simulation::scenario_evaluator {
+namespace xpilot::simulation::scenario_evaluator {
+```
 
 ## YourMetricNameHandler::YourMetricNameHandler(
 ```javascript
@@ -150,52 +154,52 @@ REGISTER_METRIC_HANDLER(YourMetricNameHandler);
 ## {topic::kSomeTopicName, topic::kAnotherTopicName}},
 
 ```
----                                                                                                                                  
+---
 ```
 ## 第四步：BUILD 文件（两处）
 
-```
-修改 post_process/scenario_evaluator/metrics/BUILD.bazel，新增目标：                                                            
-cc_library(                                                                                                                          
-    name = "your_metric_name_handler",                                                                                               
-    srcs = ["your_metric_name_handler.cpp"],                                                                                         
-    hdrs = ["your_metric_name_handler.h"],                                                                                           
-    deps = [                                                                                                                         
-        ":metric_handler_base",                                                                                                      
-        "@simulation/simulation/sim_common:topics",                                                                                  
-        # 按需添加其他依赖                                                                                                           
+```python
+修改 post_process/scenario_evaluator/metrics/BUILD.bazel，新增目标：
+cc_library(
+    name = "your_metric_name_handler",
+    srcs = ["your_metric_name_handler.cpp"],
+    hdrs = ["your_metric_name_handler.h"],
+    deps = [
+        ":metric_handler_base",
+        "@simulation/simulation/sim_common:topics",
+        # 按需添加其他依赖
 ```
 ## ],
 ```
-alwayslink = 1,  # 必须！否则静态链接会优化掉注册宏                                                                              
+alwayslink = 1,  # 必须！否则静态链接会优化掉注册宏
 ```
 ## )
 
-```
-修改 post_process/scenario_evaluator/BUILD.bazel，在主目标 deps 中添加：                                                             
-"//scenario_evaluator/metrics:your_metric_name_handler",                                                                             
+```bash
+修改 post_process/scenario_evaluator/BUILD.bazel，在主目标 deps 中添加：
+"//scenario_evaluator/metrics:your_metric_name_handler",
 ```
 
 ```
----                                                                                                                                  
+---
 ```
 ## 文件清单
 
-| 操作  | 文件                                                      |     |
-| --- | ------------------------------------------------------- | --- |
-| 新建  | simulation_proto/your_metric_name.proto                 |     |
-| 修改  | simulation_proto/scenario_metric.proto                  |     |
-| 修改  | simulation_proto/frame_passing_result.proto             |     |
-| 新建  | scenario_evaluator/metrics/your_metric_name_handler.h   |     |
-| 新建  | scenario_evaluator/metrics/your_metric_name_handler.cpp |     |
-| 修改  | scenario_evaluator/metric_topic_map.h                   |     |
-| 修改  | scenario_evaluator/metrics/BUILD.bazel                  |     |
-| 修改  | scenario_evaluator/BUILD.bazel                          |     |
+| 操作 | 文件 |
+| --- | --- |
+| 新建 | simulation_proto/your_metric_name.proto |
+| 修改 | simulation_proto/scenario_metric.proto |
+| 修改 | simulation_proto/frame_passing_result.proto |
+| 新建 | scenario_evaluator/metrics/your_metric_name_handler.h |
+| 新建 | scenario_evaluator/metrics/your_metric_name_handler.cpp |
+| 修改 | scenario_evaluator/metric_topic_map.h |
+| 修改 | scenario_evaluator/metrics/BUILD.bazel |
+| 修改 | scenario_evaluator/BUILD.bazel |
 
 ```
-▎ 核心机制：REGISTER_METRIC_HANDLER 宏在 .cpp 末尾生成一个静态工厂类并自注册到 MetricHandlerFactory，alwayslink=1                    
-确保静态库链接时不被优化掉。scenario_evaluator.cpp 无需任何修改。 
+▎ 核心机制：REGISTER_METRIC_HANDLER 宏在 .cpp 末尾生成一个静态工厂类并自注册到 MetricHandlerFactory，alwayslink=1 
+确保静态库链接时不被优化掉。scenario_evaluator.cpp 无需任何修改。
 ```
 
 ---
-*标签：#claude-output #代码 #cpp #javascript #go #问题解答 #待整理*
+*标签：#代码 #bash #待整理 #protobuf #JavaScript #问题解答 #claude-output*

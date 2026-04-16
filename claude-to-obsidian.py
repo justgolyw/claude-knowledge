@@ -109,20 +109,24 @@ def _is_code_line(line: str) -> bool:
     """判断一行是否含有代码特征"""
     stripped = line.strip()
     code_patterns = [
-        r'^#',                          # 注释
+        r'^#',                          # 注释 / shebang
         r'[|&;]',                       # 管道/分隔符
         r'\$\w+|\$\{',                  # shell 变量
         r"echo |curl |grep |awk |sed |cat |ls |cd |git |docker ", # 常用命令
-        r"jq |python |pip |npm |go |cargo ",  # 工具命令
+        r"jq |python |pip |npm |go |cargo |bazel ",  # 工具命令（含 bazel）
         r'^\w+\s*[=({]',               # 赋值/函数调用
         r'["\'].*["\']',               # 引号字符串
         r'^\s*\w+\(.*\)',              # 函数调用
         r'<\w+>|</\w+>',              # HTML 标签
         r'=>|->|\.\.\.',               # 箭头/省略号
-        r'^\s*\w+:\s*\w',             # key: value
-        r'\.\w{2,5}(\s|$)',           # 含文件扩展名（.json .yaml .txt 等）
+        r'^\s*\w+:\s*\w',             # key: value (yaml/bazel)
+        r'\.\w{2,5}(\s|$)',           # 含文件扩展名（.json .yaml .proto 等）
         r'^(jd|ffmpeg|kubectl|helm|terraform|ansible|vault|aws|gcloud|az|gh|wget|tar|zip|unzip|chmod|chown|mkdir|rm|cp|mv)\s', # 常见 CLI 工具
         r'-{1,2}[a-zA-Z][\w-]*',      # 命令行选项（-f / --flag）
+        r'^\s*(cc_library|cc_binary|proto_library|py_library|filegroup)\(',  # Bazel BUILD
+        r'^\s*(message |enum |syntax |import |package )',  # Proto 定义
+        r'^\s*(#include|namespace |class |struct |void |int |bool |auto )',  # C++ 关键字
+        r'^\s*(assert|LOG\(|REGISTER_)',  # C++ 常用宏/调用
     ]
     return any(re.search(p, stripped) for p in code_patterns)
 
@@ -226,7 +230,11 @@ def _guess_language(code_lines: List[str]) -> str:
         return 'go'
     if re.search(r'^\s*(#include|int main|std::)', code, re.M):
         return 'cpp'
-    if re.search(r'\b(curl|echo|grep|awk|sed|bash|sh|apt|git|docker|kubectl)\b', code):
+    if re.search(r'^\s*(message |enum |syntax = "proto)', code, re.M):
+        return 'protobuf'
+    if re.search(r'^\s*(cc_library|cc_binary|proto_library|py_library)\(', code, re.M):
+        return 'python'  # Bazel BUILD 文件用 python 高亮
+    if re.search(r'\b(curl|echo|grep|awk|sed|bash|sh|apt|git|docker|kubectl|bazel)\b', code):
         return 'bash'
     if re.search(r'^\s*(SELECT|INSERT|UPDATE|DELETE|CREATE)\b', code, re.M | re.I):
         return 'sql'
@@ -437,13 +445,15 @@ class ClaudeToObsidian:
 
         # 次选：代码块外第一个普通文字行（不以 # - * 等特殊符号开头）
         plain_skip = [
-            r'^#',        # Markdown 标题 / 代码注释 / shebang
-            r'^[-*+]',    # 列表项
-            r'^>',        # 引用块
-            r'^`',        # 行内代码
+            r'^#',            # Markdown 标题 / 代码注释 / shebang
+            r'^[-*+]',        # 列表项
+            r'^>',            # 引用块
+            r'^`',            # 行内代码
+            r'^\|',           # Markdown 表格行
+            r'^[❯$%]\s',     # shell 提示符行（❯ / $ / %）
             r'^import ',
             r'^from ',
-            r'^[-=]{3,}', # 分隔线
+            r'^[-=]{3,}',     # 分隔线
         ]
         for line in non_code_lines:
             stripped = line.strip()
