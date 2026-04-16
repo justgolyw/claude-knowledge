@@ -1,4 +1,4 @@
-# 新增 C++ Metric 流程（以 hmi_output_check_metric 为例）
+# 新增 C++ Metric 流程（ hmi_output_check_metric 为例）
 
 > 导入自 Claude AI · 2026-04-16 · 工具库
 
