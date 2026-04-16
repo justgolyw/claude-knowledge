@@ -349,7 +349,18 @@ def convert_html_to_markdown(html_bytes: bytes) -> Optional[str]:
             stream_info=StreamInfo(mimetype="text/html", charset="utf-8"),
         )
         text = result.text_content or ""
-        return text.strip() if text.strip() else None
+        text = text.strip()
+        if not text:
+            return None
+        # markitdown 有时将整个 Claude Code 输出包在一个大代码块中
+        # 检测并剥除：开头是 ``` 且结尾是 ``` 且中间没有其他代码块围栏
+        lines = text.splitlines()
+        if lines and lines[0].strip() == '```' and lines[-1].strip() == '```':
+            inner = '\n'.join(lines[1:-1])
+            # 只有当内部不存在嵌套的 ``` 时才剥除，否则保留
+            if inner.count('```') == 0:
+                text = inner.strip()
+        return text
     except Exception:
         return None
 
@@ -429,7 +440,7 @@ class ClaudeToObsidian:
             raise ValueError(f"读取粘贴板失败：{e}")
 
     def extract_title(self, content: str) -> str:
-        """从内容中提取标题，优先取一级标题，跳过代码块内的行"""
+        """从内容中提取标题：优先取第一行普通文字，其次取一级标题"""
         lines = content.split('\n')
 
         # 过滤掉代码块内的行，避免把代码注释当成标题
@@ -442,21 +453,15 @@ class ClaudeToObsidian:
             if not in_code_block:
                 non_code_lines.append(line)
 
-        # 优先匹配一级标题（# 开头，且 # 后无更多 #）
-        for line in non_code_lines:
-            stripped = line.strip()
-            if re.match(r'^#\s+\S', stripped):
-                title = stripped.lstrip('#').strip()
-                return title[:80]
-
-        # 次选：代码块外第一个普通文字行（不以 # - * 等特殊符号开头）
+        # 优先：代码块外第一个普通文字行（不以特殊符号开头）
+        # Claude Code 的输出标题通常就是第一行纯文字，没有 # 前缀
         plain_skip = [
-            r'^#',            # Markdown 标题 / 代码注释 / shebang
-            r'^[-*+]',        # 列表项
+            r'^#{1,6}\s',     # Markdown 标题（留给次选）
+            r'^[-*+]\s',      # 列表项（紧跟空格，避免误匹配 C++）
             r'^>',            # 引用块
             r'^`',            # 行内代码
             r'^\|',           # Markdown 表格行
-            r'^[❯$%]\s',     # shell 提示符行（❯ / $ / %）
+            r'^[❯$%]\s',     # shell 提示符行
             r'^import ',
             r'^from ',
             r'^[-=]{3,}',     # 分隔线
@@ -466,7 +471,14 @@ class ClaudeToObsidian:
             if stripped and not any(re.match(p, stripped) for p in plain_skip):
                 return stripped[:80]
 
-        # 最后回退到任意级别的 Markdown 标题（## ### 等）
+        # 次选：一级标题（# 开头）
+        for line in non_code_lines:
+            stripped = line.strip()
+            if re.match(r'^#\s+\S', stripped):
+                title = stripped.lstrip('#').strip()
+                return title[:80]
+
+        # 最后回退：任意级别标题
         for line in non_code_lines:
             stripped = line.strip()
             if stripped.startswith('#'):
