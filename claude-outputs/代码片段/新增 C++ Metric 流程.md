@@ -1,4 +1,4 @@
-# 新增 C++ Metric 流程（以 hmi_output_check_metric 为例）
+# 新增 C++ Metric 流程
 
 > 导入自 Claude AI · 2026-04-16 · 工具库
 
@@ -23,7 +23,7 @@ simulation/simulation/simulation_proto/hmi_output_check_metric.proto
 ```
 ---
 ```
-## 2. 修改 Proto 汇总文件（注册 metric 到 oneof）
+## 2. 修改 Proto 汇总文件
 
 ## 修改文件 1：
 ```
@@ -129,7 +129,7 @@ post_process/scenario_evaluator/BUILD.bazel
 | scenario_evaluator/BUILD.bazel | 修改 | 主 target deps 引用新 handler |
 
 ```
-▎ 关键机制：REGISTER_METRIC_HANDLER 宏通过静态全局变量在 main() 前自动注册工厂类，alwayslink = 1 保证链接器不丢弃该目标。无需修改
+关键机制：REGISTER_METRIC_HANDLER 宏通过静态全局变量在 main() 前自动注册工厂类，alwayslink = 1 保证链接器不丢弃该目标。无需修改
 scenario_evaluator.cpp 中的主逻辑。
 ```
 
