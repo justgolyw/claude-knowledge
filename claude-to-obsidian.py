@@ -109,7 +109,9 @@ def _is_code_line(line: str) -> bool:
     """判断一行是否含有代码特征"""
     stripped = line.strip()
     code_patterns = [
-        r'^#',                          # 注释 / shebang
+        r'^#',                          # 注释 / shebang（shell/Python）
+        r'^//',                         # C++/Java/JS 单行注释
+        r'^/\*',                        # C++ 多行注释开头
         r'[|&;]',                       # 管道/分隔符
         r'\$\w+|\$\{',                  # shell 变量
         r"echo |curl |grep |awk |sed |cat |ls |cd |git |docker ", # 常用命令
@@ -168,6 +170,10 @@ def _convert_indented_block(block: List[str]) -> List[str]:
             and not _is_code_line(line)
             and not stripped.startswith('-')
             and not stripped.startswith('```')
+            and not stripped.startswith('//')   # C++ 注释不是标题
+            and not stripped.startswith('/*')   # C++ 多行注释不是标题
+            and not stripped.startswith('}')    # 闭括号不是标题
+            and not stripped.startswith('{')    # 开括号不是标题
         )
 
         if is_heading_candidate:
