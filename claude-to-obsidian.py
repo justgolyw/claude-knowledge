@@ -122,6 +122,11 @@ def _is_code_line(line: str) -> bool:
         r'\.\w{2,5}(\s|$)',           # 含文件扩展名（.json .yaml .txt 等）
         r'^(jd|ffmpeg|kubectl|helm|terraform|ansible|vault|aws|gcloud|az|gh|wget|tar|zip|unzip|chmod|chown|mkdir|rm|cp|mv)\s', # 常见 CLI 工具
         r'-{1,2}[a-zA-Z][\w-]*',      # 命令行选项（-f / --flag）
+        r'\w+::\w+',                   # C++ 命名空间（proto::, topic::, std:: 等）
+        r'^\s*\{',                     # 以 { 开头的块
+        r'\}\s*[,;]?\s*$',            # 以 } 结尾的块
+        r'^\s*(cc_library|cc_binary|bazel|name\s*=|srcs\s*=|deps\s*=|hdrs\s*=)', # Bazel BUILD 规则
+        r'alwayslink\s*=',             # Bazel alwayslink
     ]
     return any(re.search(p, stripped) for p in code_patterns)
 
@@ -305,10 +310,16 @@ class ClaudeToObsidian:
     # 内容分类规则（关键词 + 权重）
     CATEGORIES: Dict[str, dict] = {
         "代码": {
-            # 代码块权重降低，避免压制其他分类
-            "keywords": {"```": 1, "import ": 2, "def ": 2, "class ": 2,
+            "keywords": {"```": 2, "import ": 2, "def ": 2, "class ": 2,
                          "function ": 2, "const ": 1, "let ": 1, "var ": 1,
-                         "return ": 1, "if (": 1, "for (": 1},
+                         "return ": 1, "if (": 1, "for (": 1,
+                         # C++ 特征
+                         "#include": 4, "::": 3, "cc_library": 4, "cc_binary": 4,
+                         "alwayslink": 4, "proto::": 4, "bazel": 3,
+                         "handler": 2, "metric": 2,
+                         # 流程/架构类
+                         "新增文件": 3, "修改文件": 3, "新增": 2, "修改": 1,
+                         ".cpp": 3, ".h": 2, ".proto": 3, ".bazel": 3},
             "path": "claude-outputs/代码片段"
         },
         "理论概念": {
@@ -321,7 +332,7 @@ class ClaudeToObsidian:
             "keywords": {"库": 2, "工具": 2, "框架": 2, "包": 1,
                          "package": 2, "library": 3, "framework": 3,
                          "npm": 3, "pip": 3, "安装": 1, "使用方法": 3,
-                         "如何使用": 3, "用法": 2, "命令": 2, "教程": 2,
+                         "如何使用": 3, "用法": 2, "命令": 1, "教程": 2,
                          "参数": 1, "选项": 1, "示例": 1},
             "path": "claude-outputs/工具库"
         },
@@ -386,15 +397,18 @@ class ClaudeToObsidian:
             r'^import ',
             r'^from ',
             r'^[-=]{3,}', # 分隔线
+            r'^\|',       # Markdown 表格行
         ]
         for line in non_code_lines:
             stripped = line.strip()
             if stripped and not any(re.match(p, stripped) for p in plain_skip):
                 return stripped[:80]
 
-        # 最后回退到任意级别的 Markdown 标题（## ### 等）
+        # 最后回退到任意级别的 Markdown 标题（## ### 等），跳过表格行
         for line in non_code_lines:
             stripped = line.strip()
+            if stripped.startswith('|'):
+                continue
             if stripped.startswith('#'):
                 title = stripped.lstrip('#').strip()
                 if title:
