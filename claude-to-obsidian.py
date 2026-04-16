@@ -337,9 +337,111 @@ def _get_clipboard_html() -> Optional[bytes]:
 
 def convert_html_to_markdown(html_bytes: bytes) -> Optional[str]:
     """
-    使用 markitdown 将 HTML 字节流精确转换为 Markdown。
-    返回转换后的字符串；失败时返回 None。
+    将 Claude Code 复制的 HTML 精确转换为 Markdown。
+
+    Claude Code 终端的 HTML 是 pre>div>span 带内联颜色样式的结构，
+    本质上是带语法高亮的纯文本，需提取文本后走 restore_markdown 处理。
+    语义化 HTML（含真正的 table/code 标签）则用 BeautifulSoup 处理。
     """
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html_bytes, "html.parser")
+
+        # 检测 Claude Code 终端格式：pre > div[style] > div > span 结构
+        pre = soup.find("pre")
+        if pre:
+            first_child = next((c for c in pre.children if getattr(c, 'name', None)), None)
+            if first_child and first_child.name == "div" and first_child.get("style"):
+                # 终端格式：逐行提取文本，去掉行尾空格（终端会填充到固定宽度）
+                lines = []
+                for div in first_child.find_all("div", recursive=False):
+                    lines.append(div.get_text().rstrip())
+                text = "\n".join(lines).strip()
+                # 走和纯文本一样的 restore_markdown 处理
+                return restore_markdown(text) if text else None
+
+        # 语义化 HTML：用 BeautifulSoup 自定义解析
+        from bs4 import NavigableString, Tag
+
+        root = soup.body or soup
+
+        def node_to_md(node, list_depth=0) -> str:
+            if isinstance(node, NavigableString):
+                return str(node)
+            tag = node.name
+            if tag is None:
+                return ""
+            children_md = lambda: "".join(node_to_md(c, list_depth) for c in node.children)
+
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                level = int(tag[1])
+                return f"\n{'#' * level} {children_md().strip()}\n\n"
+            if tag == "p":
+                return f"\n{children_md().strip()}\n"
+            if tag == "br":
+                return "\n"
+            if tag in ("strong", "b"):
+                return f"**{children_md()}**"
+            if tag in ("em", "i"):
+                return f"*{children_md()}*"
+            if tag == "code" and node.parent and node.parent.name != "pre":
+                return f"`{node.get_text()}`"
+            if tag == "pre":
+                code_node = node.find("code")
+                code_text = (code_node or node).get_text()
+                lang = ""
+                if code_node:
+                    for cls in (code_node.get("class") or []):
+                        if cls.startswith("language-"):
+                            lang = cls[len("language-"):]
+                            break
+                return f"\n```{lang}\n{code_text.rstrip()}\n```\n"
+            if tag == "table":
+                rows = node.find_all("tr")
+                if not rows:
+                    return children_md()
+                md_rows = []
+                for i, row in enumerate(rows):
+                    cells = row.find_all(["th", "td"])
+                    cell_texts = [c.get_text().strip().replace("\n", " ") for c in cells]
+                    md_rows.append("| " + " | ".join(cell_texts) + " |")
+                    if i == 0:
+                        md_rows.append("| " + " | ".join(["---"] * len(cells)) + " |")
+                return "\n" + "\n".join(md_rows) + "\n"
+            if tag in ("thead", "tbody", "tfoot", "tr", "th", "td"):
+                return children_md()
+            if tag == "ul":
+                items = []
+                for li in node.find_all("li", recursive=False):
+                    text = "".join(node_to_md(c, list_depth + 1) for c in li.children).strip()
+                    items.append("  " * list_depth + f"- {text}")
+                return "\n" + "\n".join(items) + "\n"
+            if tag == "ol":
+                items = []
+                for idx, li in enumerate(node.find_all("li", recursive=False), 1):
+                    text = "".join(node_to_md(c, list_depth + 1) for c in li.children).strip()
+                    items.append("  " * list_depth + f"{idx}. {text}")
+                return "\n" + "\n".join(items) + "\n"
+            if tag == "hr":
+                return "\n---\n"
+            if tag == "a":
+                href = node.get("href", "")
+                text = children_md().strip()
+                return f"[{text}]({href})" if href else text
+            if tag == "blockquote":
+                inner = children_md().strip()
+                return "\n" + "\n".join(f"> {l}" for l in inner.splitlines()) + "\n"
+            return children_md()
+
+        md = node_to_md(root).strip()
+        md = re.sub(r'\n{3,}', '\n\n', md)
+        return md if md else None
+
+    except Exception:
+        pass
+
+    # 回退：markitdown
     if not _MARKITDOWN_AVAILABLE:
         return None
     try:
@@ -348,16 +450,12 @@ def convert_html_to_markdown(html_bytes: bytes) -> Optional[str]:
             io.BytesIO(html_bytes),
             stream_info=StreamInfo(mimetype="text/html", charset="utf-8"),
         )
-        text = result.text_content or ""
-        text = text.strip()
+        text = (result.text_content or "").strip()
         if not text:
             return None
-        # markitdown 有时将整个 Claude Code 输出包在一个大代码块中
-        # 检测并剥除：开头是 ``` 且结尾是 ``` 且中间没有其他代码块围栏
         lines = text.splitlines()
         if lines and lines[0].strip() == '```' and lines[-1].strip() == '```':
             inner = '\n'.join(lines[1:-1])
-            # 只有当内部不存在嵌套的 ``` 时才剥除，否则保留
             if inner.count('```') == 0:
                 text = inner.strip()
         return text
